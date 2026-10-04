@@ -173,6 +173,11 @@
         setState(item.li, { text: `Done — ${fmtSize(s.size)} (was ${fmtSize(item.file.size)})`, done: true });
         const a = document.createElement('a');
         a.className = 'btn'; a.href = '/api/download/' + id; a.textContent = 'Download MP4';
+        // The server deletes the file after it's downloaded, so the link only works once.
+        a.addEventListener('click', () => setTimeout(() => {
+          a.replaceWith('Downloaded');
+          setState(item.li, { text: `Saved to your Downloads folder — ${fmtSize(s.size)}`, done: true });
+        }, 0));
         item.li.querySelector('.action').append(a);
         return;
       }

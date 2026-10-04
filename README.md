@@ -24,7 +24,7 @@ node server.js
 
 Then open http://localhost:5173, drop in one or more `.webm` files, and click **Download MP4** when each finishes.
 
-Converted files are kept in your temp folder (`%TEMP%\webm-to-mp4`) and removed after an hour.
+Converted files are not kept: each MP4 is deleted from the temp folder (`%TEMP%\webm-to-mp4`) as soon as you download it, and anything not downloaded is removed after an hour.
 Set the `PORT` environment variable to use a different port.
 
 ## Options

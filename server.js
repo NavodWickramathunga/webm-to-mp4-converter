@@ -156,6 +156,12 @@ const server = http.createServer((req, res) => {
       'Content-Length': job.size,
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(outName)}`,
     });
+    // Delete the converted file once it has been fully downloaded — nothing is kept.
+    res.on('finish', () => {
+      jobs.delete(m[2]);
+      fs.rm(job.output, { force: true }, () => {});
+      fs.rm(job.output.replace(/\.mp4$/, '.json'), { force: true }, () => {});
+    });
     return fs.createReadStream(job.output).pipe(res);
   }
 

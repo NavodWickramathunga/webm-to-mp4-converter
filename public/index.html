@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WEBM to MP4</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #1a1d23; --muted: #6b7280;
+      --border: #e3e6eb; --accent: #2563eb; --accent-soft: #e8efff;
+      --ok: #16a34a; --err: #dc2626; --bar: #e9ecf1;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111317; --card: #1a1d23; --text: #e8eaee; --muted: #9aa1ad;
+        --border: #2c3038; --accent: #5b8cff; --accent-soft: #1e2a45;
+        --ok: #4ade80; --err: #f87171; --bar: #2c3038;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+
+    .drop {
+      border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
+      padding: 40px 20px; text-align: center; cursor: pointer; transition: .15s;
+    }
+    .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+    .drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+    .drop span { color: var(--muted); font-size: 14px; }
+
+    .options {
+      display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 18px 0 8px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+    }
+    .options label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+    select {
+      font: inherit; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px;
+    }
+
+    ul { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 10px; }
+    li {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center;
+    }
+    .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
+    .meta.err { color: var(--err); white-space: pre-wrap; }
+    .meta.ok { color: var(--ok); }
+    .bar { grid-column: 1 / -1; height: 6px; background: var(--bar); border-radius: 99px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+    .bar.indeterminate > div { width: 30%; animation: slide 1.2s infinite ease-in-out; }
+    @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+    a.btn {
+      background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; font-size: 14px;
+      padding: 6px 14px; border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>WEBM → MP4</h1>
+  <p class="sub">Convert WebM videos to MP4 (H.264 + AAC) on this computer using FFmpeg. Files never leave your machine.</p>
+
+  <div class="drop" id="drop" tabindex="0">
+    <strong>Drop .webm files here</strong>
+    <span>or click to choose — multiple files supported</span>
+    <input type="file" id="file" accept=".webm,video/webm,video/*" multiple hidden />
+  </div>
+
+  <div class="options">
+    <label>Quality
+      <select id="quality">
+        <option value="high">High (larger file)</option>
+        <option value="balanced" selected>Balanced</option>
+        <option value="small">Small file</option>
+      </select>
+    </label>
+    <label>Speed
+      <select id="speed">
+        <option value="ultrafast">Fastest</option>
+        <option value="veryfast" selected>Fast</option>
+        <option value="medium">Normal</option>
+        <option value="slow">Slow (smaller)</option>
+      </select>
+    </label>
+    <label>Audio
+      <select id="audio">
+        <option value="1" selected>Keep</option>
+        <option value="0">Remove</option>
+      </select>
+    </label>
+  </div>
+
+  <ul id="list"></ul>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const drop = $('drop'), input = $('file'), list = $('list');
+  const queue = [];
+  let busy = false;
+
+  const fmtSize = (b) => b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && input.click());
+  input.addEventListener('change', () => { addFiles(input.files); input.value = ''; });
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
+
+  function addFiles(files) {
+    for (const file of files) {
+      const li = document.createElement('li');
+      li.innerHTML = `<div class="name"></div><div class="action"></div>
+        <div class="bar"><div></div></div><div class="meta">Waiting…</div>`;
+      li.querySelector('.name').textContent = file.name;
+      list.prepend(li);
+      queue.push({ file, li, opts: {
+        quality: $('quality').value, speed: $('speed').value, audio: $('audio').value,
+      }});
+    }
+    next();
+  }
+
+  async function next() {
+    if (busy || !queue.length) return;
+    busy = true;
+    const item = queue.shift();
+    try { await convert(item); }
+    catch (err) { setState(item.li, { error: err.message }); }
+    busy = false;
+    next();
+  }
+
+  function setState(li, { text, progress, error, done }) {
+    const meta = li.querySelector('.meta'), bar = li.querySelector('.bar');
+    meta.className = 'meta' + (error ? ' err' : done ? ' ok' : '');
+    meta.textContent = error || text || '';
+    bar.classList.toggle('indeterminate', progress === null);
+    bar.firstElementChild.style.width = (progress ?? 0) + '%';
+    if (error || done) bar.style.display = 'none';
+  }
+
+  function upload(item) {
+    return new Promise((resolve, reject) => {
+      const q = new URLSearchParams({ name: item.file.name, ...item.opts });
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/convert?' + q);
+      xhr.upload.onprogress = (e) => e.lengthComputable &&
+        setState(item.li, { text: `Uploading… ${Math.round(e.loaded / e.total * 100)}%`, progress: e.loaded / e.total * 100 });
+      xhr.onload = () => xhr.status === 200 ? resolve(JSON.parse(xhr.responseText).id)
+                                            : reject(new Error('Upload failed: ' + xhr.responseText));
+      xhr.onerror = () => reject(new Error('Upload failed — is the server still running?'));
+      xhr.send(item.file);
+    });
+  }
+
+  async function convert(item) {
+    const id = await upload(item);
+    while (true) {
+      await new Promise((r) => setTimeout(r, 700));
+      const s = await (await fetch('/api/status/' + id)).json();
+      if (s.status === 'error') throw new Error(s.error || 'Conversion failed');
+      if (s.status === 'done') {
+        setState(item.li, { text: `Done — ${fmtSize(s.size)} (was ${fmtSize(item.file.size)})`, done: true });
+        const a = document.createElement('a');
+        a.className = 'btn'; a.href = '/api/download/' + id; a.textContent = 'Download MP4';
+        item.li.querySelector('.action').append(a);
+        return;
+      }
+      const p = s.progress == null ? null : Math.round(s.progress);
+      setState(item.li, { text: p == null ? 'Converting…' : `Converting… ${p}%`, progress: p });
+    }
+  }
+</script>
+</body>
+</html>

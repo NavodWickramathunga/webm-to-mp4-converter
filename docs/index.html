@@ -42,10 +42,10 @@
     .options label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
     select {
       font: inherit; color: var(--text); background: var(--bg);
-      border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px;
+      border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; max-width: 100%;
     }
-    .engine { font-size: 13px; color: var(--muted); margin: 6px 2px 0; }
-    .engine.err { color: var(--err); }
+    .hint { font-size: 13px; color: var(--muted); margin: 6px 2px 0; }
+    .hint.err { color: var(--err); }
 
     ul { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 10px; }
     li {
@@ -71,7 +71,7 @@
 <body>
 <main>
   <h1>WEBM → MP4</h1>
-  <p class="sub">Convert WebM videos to MP4 (H.264 + AAC) right in your browser. Your files never leave your device.</p>
+  <p class="sub">Convert WebM videos to MP4 right in your browser. Your files never leave your device.</p>
 
   <div class="drop" id="drop" tabindex="0">
     <strong>Drop .webm files here</strong>
@@ -80,18 +80,17 @@
   </div>
 
   <div class="options">
-    <label>Quality
-      <select id="quality">
-        <option value="18">High (larger file)</option>
-        <option value="23" selected>Balanced</option>
-        <option value="28">Small file</option>
+    <label>Mode
+      <select id="mode">
+        <option value="convert" selected>Convert to H.264 — plays everywhere</option>
+        <option value="quick">Quick — no re-encoding (seconds)</option>
       </select>
     </label>
-    <label>Speed
-      <select id="speed">
-        <option value="ultrafast" selected>Fastest</option>
-        <option value="veryfast">Fast</option>
-        <option value="medium">Normal (slow)</option>
+    <label id="qualityLabel">Quality
+      <select id="quality">
+        <option value="high">High (larger file)</option>
+        <option value="balanced" selected>Balanced</option>
+        <option value="small">Small file</option>
       </select>
     </label>
     <label>Audio
@@ -101,31 +100,44 @@
       </select>
     </label>
   </div>
-  <p class="engine" id="engine">The converter engine (~30 MB) downloads the first time you convert a file.</p>
+  <p class="hint" id="hint"></p>
 
   <ul id="list"></ul>
 
   <footer>
-    Powered by <a href="https://github.com/ffmpegwasm/ffmpeg.wasm" target="_blank" rel="noopener">ffmpeg.wasm</a>.
-    Works best for files under ~1 GB. ·
+    Uses your device's video hardware via WebCodecs (<a href="https://mediabunny.dev" target="_blank" rel="noopener">Mediabunny</a>),
+    with <a href="https://github.com/ffmpegwasm/ffmpeg.wasm" target="_blank" rel="noopener">ffmpeg.wasm</a> as a fallback. ·
     <a href="https://github.com/NavodWickramathunga/webm-to-mp4-converter" target="_blank" rel="noopener">Source on GitHub</a>
   </footer>
 </main>
 
 <script type="module">
-  import { FFmpeg } from './vendor/ffmpeg/index.js';
-  import { fetchFile, toBlobURL } from './vendor/util/index.js';
+  const FFMPEG_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+  const CRF = { high: '18', balanced: '23', small: '28' };
+  // ?engine=ffmpeg forces the fallback engine (useful for testing).
+  const FORCE_FFMPEG = new URLSearchParams(location.search).get('engine') === 'ffmpeg';
 
-  const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+  const HINTS = {
+    convert: 'Re-encodes to H.264 + AAC so the MP4 plays on any device. Uses your graphics hardware when the browser supports it.',
+    quick: 'Copies the original video and audio into an MP4 without re-encoding — very fast. Plays in modern browsers, VLC and Windows 10/11, but some older players and older iPhones may not support it.',
+  };
 
   const $ = (id) => document.getElementById(id);
-  const drop = $('drop'), input = $('file'), list = $('list'), engine = $('engine');
+  const drop = $('drop'), input = $('file'), list = $('list'), hint = $('hint');
   const queue = [];
   let busy = false;
-  let ffmpeg = null;
 
   const fmtSize = (b) => b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+  const fmtTime = (s) => s < 60 ? s.toFixed(1) + 's' : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
   const toSeconds = (t) => t.split(':').reduce((acc, v) => acc * 60 + parseFloat(v), 0);
+
+  function updateHint() {
+    hint.className = 'hint';
+    hint.textContent = HINTS[$('mode').value];
+    $('qualityLabel').style.display = $('mode').value === 'quick' ? 'none' : '';
+  }
+  $('mode').addEventListener('change', updateHint);
+  updateHint();
 
   drop.addEventListener('click', () => input.click());
   drop.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && input.click());
@@ -133,19 +145,6 @@
   ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
-
-  async function getFFmpeg() {
-    if (ffmpeg) return ffmpeg;
-    engine.className = 'engine';
-    engine.textContent = 'Loading converter engine (~30 MB, first time only)…';
-    const ff = new FFmpeg();
-    await ff.load({
-      coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm'),
-    });
-    engine.textContent = 'Converter engine ready.';
-    return (ffmpeg = ff);
-  }
 
   function addFiles(files) {
     for (const file of files) {
@@ -155,7 +154,7 @@
       li.querySelector('.name').textContent = file.name;
       list.prepend(li);
       queue.push({ file, li, opts: {
-        crf: $('quality').value, speed: $('speed').value, audio: $('audio').value === '1',
+        mode: $('mode').value, quality: $('quality').value, audio: $('audio').value === '1',
       }});
     }
     next();
@@ -181,14 +180,102 @@
   }
 
   async function convert({ file, li, opts }) {
+    const started = performance.now();
     setState(li, { text: 'Preparing…', progress: null });
-    let ff;
-    try { ff = await getFFmpeg(); }
-    catch (err) {
-      engine.className = 'engine err';
-      engine.textContent = 'Could not load the converter engine. Check your internet connection and reload the page.';
+
+    let blob = null, engine = opts.mode === 'quick' ? 'no re-encoding' : 'fast engine';
+    if (!FORCE_FFMPEG && 'VideoEncoder' in window) {
+      try { blob = await convertWithWebCodecs(file, li, opts); }
+      catch (err) { console.warn('WebCodecs conversion failed, falling back to ffmpeg.wasm:', err); }
+    }
+    if (!blob) {
+      engine = 'compatibility mode';
+      blob = await convertWithFFmpeg(file, li, opts);
+    }
+
+    const a = document.createElement('a');
+    a.className = 'btn';
+    a.href = URL.createObjectURL(blob);
+    a.download = file.name.replace(/\.[^.]+$/, '') + '.mp4';
+    a.textContent = 'Download MP4';
+    li.querySelector('.action').append(a);
+    const secs = (performance.now() - started) / 1000;
+    setState(li, { text: `Done in ${fmtTime(secs)} — ${fmtSize(blob.size)} (was ${fmtSize(file.size)}) · ${engine}`, done: true });
+  }
+
+  // ---- Fast path: WebCodecs (uses the GPU's video encoder when available) ----
+
+  let mediabunny = null;
+  async function convertWithWebCodecs(file, li, opts) {
+    const mb = mediabunny ??= await import('./vendor/mediabunny/mediabunny.min.mjs');
+    const input = new mb.Input({ formats: mb.ALL_FORMATS, source: new mb.BlobSource(file) });
+    try {
+      const videoTrack = await input.getPrimaryVideoTrack();
+      if (!videoTrack) throw new Error('No video track found');
+      const audioTrack = opts.audio ? await input.getPrimaryAudioTrack() : null;
+
+      let video = {}, audio = opts.audio ? {} : { discard: true };
+      if (opts.mode === 'convert') {
+        const quality = { high: mb.QUALITY_HIGH, balanced: mb.QUALITY_MEDIUM, small: mb.QUALITY_LOW }[opts.quality];
+        // H.264 needs even dimensions.
+        const width = videoTrack.displayWidth & ~1, height = videoTrack.displayHeight & ~1;
+        if (!(await mb.canEncodeVideo('avc', { width, height, quality }))) return null;
+        video = { codec: 'avc', quality, width, height, fit: 'fill', hardwareAcceleration: 'prefer-hardware' };
+        if (audioTrack) {
+          const ok = await mb.canEncodeAudio('aac', {
+            numberOfChannels: audioTrack.numberOfChannels, sampleRate: audioTrack.sampleRate,
+          });
+          if (!ok) return null;
+          audio = { codec: 'aac' };
+        }
+      }
+
+      const output = new mb.Output({
+        format: new mb.Mp4OutputFormat({ fastStart: 'in-memory' }),
+        target: new mb.BufferTarget(),
+      });
+      const conversion = await mb.Conversion.init({ input, output, video, audio, showWarnings: false });
+      if (!conversion.isValid) return null;
+      const lostAudio = audioTrack && conversion.discardedTracks.some((d) => d.track.type === 'audio');
+      if (lostAudio) return null; // let the fallback engine handle the audio properly
+
+      conversion.onProgress = (p) => {
+        const pct = Math.round(p * 100);
+        setState(li, { text: `${opts.mode === 'quick' ? 'Copying' : 'Converting'}… ${pct}%`, progress: pct });
+      };
+      setState(li, { text: 'Converting…', progress: 0 });
+      await conversion.execute();
+      return new Blob([output.target.buffer], { type: 'video/mp4' });
+    } finally {
+      input.dispose?.();
+    }
+  }
+
+  // ---- Fallback: ffmpeg.wasm (works everywhere, but CPU-only and slower) ----
+
+  let ffmpeg = null;
+  async function getFFmpeg(li) {
+    if (ffmpeg) return ffmpeg;
+    setState(li, { text: 'Loading compatibility engine (~30 MB, first time only)…', progress: null });
+    const { FFmpeg } = await import('./vendor/ffmpeg/index.js');
+    const { toBlobURL } = await import('./vendor/util/index.js');
+    const ff = new FFmpeg();
+    try {
+      await ff.load({
+        coreURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${FFMPEG_CORE}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+    } catch (err) {
+      hint.className = 'hint err';
+      hint.textContent = 'Could not load the compatibility engine. Check your internet connection and reload the page.';
       throw err;
     }
+    return (ffmpeg = ff);
+  }
+
+  async function convertWithFFmpeg(file, li, opts) {
+    const ff = await getFFmpeg(li);
+    const { fetchFile } = await import('./vendor/util/index.js');
 
     // Track progress from FFmpeg's log output ("Duration: …" then "time=…").
     let duration = null;
@@ -204,28 +291,23 @@
     ff.on('log', onLog);
 
     const inName = 'input.webm', outName = 'output.mp4';
+    const args = opts.mode === 'quick'
+      ? ['-i', inName, '-c:v', 'copy', ...(opts.audio ? ['-c:a', 'copy'] : ['-an'])]
+      : ['-i', inName,
+         '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', CRF[opts.quality], '-pix_fmt', 'yuv420p',
+         ...(opts.audio ? ['-c:a', 'aac', '-b:a', '192k'] : ['-an'])];
     try {
       await ff.writeFile(inName, await fetchFile(file));
       setState(li, { text: 'Converting…', progress: null });
-      const code = await ff.exec([
-        '-i', inName,
-        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-        '-c:v', 'libx264', '-preset', opts.speed, '-crf', opts.crf, '-pix_fmt', 'yuv420p',
-        ...(opts.audio ? ['-c:a', 'aac', '-b:a', '192k'] : ['-an']),
-        '-movflags', '+faststart',
-        outName,
-      ]);
-      if (code !== 0) throw new Error('Conversion failed — the file may be damaged or not a supported video.');
-
+      const code = await ff.exec([...args, '-movflags', '+faststart', outName]);
+      if (code !== 0) {
+        throw new Error(opts.mode === 'quick'
+          ? 'Quick mode can’t copy this video’s format into MP4. Switch Mode to “Convert to H.264” and try again.'
+          : 'Conversion failed — the file may be damaged or not a supported video.');
+      }
       const data = await ff.readFile(outName);
-      const blob = new Blob([data.buffer], { type: 'video/mp4' });
-      const a = document.createElement('a');
-      a.className = 'btn';
-      a.href = URL.createObjectURL(blob);
-      a.download = file.name.replace(/\.[^.]+$/, '') + '.mp4';
-      a.textContent = 'Download MP4';
-      li.querySelector('.action').append(a);
-      setState(li, { text: `Done — ${fmtSize(blob.size)} (was ${fmtSize(file.size)})`, done: true });
+      return new Blob([data.buffer], { type: 'video/mp4' });
     } finally {
       ff.off('log', onLog);
       await ff.deleteFile(inName).catch(() => {});

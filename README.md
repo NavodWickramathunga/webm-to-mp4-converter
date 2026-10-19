@@ -39,10 +39,3 @@ Set the `PORT` environment variable to use a different port.
 | Quality | High (CRF 18), Balanced (CRF 23), Small file (CRF 28) |
 | Speed   | x264 preset — faster = quicker conversion, slightly larger files |
 | Audio   | Keep (AAC 192k) or remove |
-
-## Promptreel marketplace (design prototype)
-[`docs/promptreel/`](docs/promptreel) holds a standalone, dependency-free build of the **Promptreel Marketplace** design:
-a storefront for AI videos and their prompts with browse, prompt library, pricing, library, creator studio and a demo checkout.
-It's served at **https://navodwickramathunga.github.io/webm-to-mp4-converter/promptreel/**.
-Deep-link into a screen or plan with `?view=pricing&plan=pro` (views: `browse`, `prompts`, `detail`, `pricing`, `library`, `studio`; plans: `free`, `starter`, `pro`).
-All data is sample data and state lives in memory; checkout charges nothing and sends nothing.
